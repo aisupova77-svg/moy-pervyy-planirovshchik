@@ -1,3 +1,10 @@
+try {
+  const savedState = JSON.parse(localStorage.getItem("pay-on-time:v1"));
+  if (savedState?.settings?.theme === "dark") document.documentElement.dataset.theme = "dark";
+} catch (error) {
+  // Повреждённые данные будут обработаны после загрузки страницы.
+}
+
 (function () {
   "use strict";
 
@@ -58,6 +65,10 @@
   }
   function formatLongDate(date) {
     return new Intl.DateTimeFormat("ru-RU", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(date);
+  }
+  function formatMonthYear(date) {
+    const formatted = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(date).replace(/\s*г\.$/u, "");
+    return formatted.charAt(0).toUpperCase() + formatted.slice(1);
   }
   function formatMoney(amountKopecks) {
     return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amountKopecks / 100);
@@ -272,13 +283,28 @@
     const startKey = getMonthKey(series.startDate);
     const currentKey = getMonthKey(toDateKey(today));
     let key = currentKey < startKey ? startKey : currentKey;
-    for (let offset = 0; offset < 24; offset += 1) {
+    let fallback = null;
+    const limit = Object.keys(series.occurrenceOverrides).length + 24;
+    for (let offset = 0; offset < limit; offset += 1) {
       const occurrence = getOccurrence(series, key);
-      if (occurrence) return occurrence;
+      if (occurrence && !occurrence.completedAt) return occurrence;
+      if (occurrence && !fallback) fallback = occurrence;
       if (series.endDate && key >= getMonthKey(series.endDate)) break;
       key = shiftMonthKey(key, 1);
     }
-    return getOccurrence(series, series.endDate ? getMonthKey(series.endDate) : startKey);
+    return fallback || getOccurrence(series, series.endDate ? getMonthKey(series.endDate) : startKey);
+  }
+  function getNextFutureOccurrence(series, todayKey) {
+    const startKey = getMonthKey(series.startDate);
+    let key = getMonthKey(todayKey) < startKey ? startKey : getMonthKey(todayKey);
+    const limit = Object.keys(series.occurrenceOverrides).length + 24;
+    for (let offset = 0; offset < limit; offset += 1) {
+      const occurrence = getOccurrence(series, key);
+      if (occurrence && !occurrence.completedAt && occurrence.date >= todayKey) return occurrence;
+      if (series.endDate && key >= getMonthKey(series.endDate)) break;
+      key = shiftMonthKey(key, 1);
+    }
+    return null;
   }
   function getMonthKeysBetween(startDateKey, endDateKey) {
     const keys = [];
@@ -329,12 +355,13 @@
   }
   function getCompletedRecords(targetState, today) {
     const cutoff = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
-    const cutoffIso = cutoff.toISOString();
-    const records = targetState.items.filter((item) => item.completedAt && item.completedAt >= cutoffIso);
+    const cutoffKey = toDateKey(cutoff);
+    const isWithinHistory = (completedAt) => completedAt && toDateKey(new Date(completedAt)) >= cutoffKey;
+    const records = targetState.items.filter((item) => isWithinHistory(item.completedAt));
     for (const series of targetState.series) {
       for (const key of Object.keys(series.occurrenceOverrides)) {
         const occurrence = getOccurrence(series, key);
-        if (occurrence?.completedAt && occurrence.completedAt >= cutoffIso) records.push(occurrence);
+        if (occurrence?.completedAt && isWithinHistory(occurrence.completedAt)) records.push(occurrence);
       }
     }
     return records;
@@ -356,19 +383,29 @@
     });
   }
   function getAllManagementRecords(today) {
-    const items = state.items.map((item) => ({ ...item, managementSource: "item" }));
+    const todayKey = toDateKey(today);
+    const items = state.items.map((item) => ({ ...item, managementSource: "item", hasFutureDate: item.date >= todayKey }));
     const seriesRows = state.series.map((series) => {
       const nearest = getRelevantOccurrence(series, today);
+      const nextFuture = getNextFutureOccurrence(series, todayKey);
       return {
         ...series,
         date: nearest?.date || series.startDate,
         completedAt: null,
         managementSource: "series-master",
         seriesId: series.id,
-        seriesMaster: true
+        seriesMaster: true,
+        hasFutureDate: Boolean(nextFuture)
       };
     });
-    return sortRecords([...items, ...seriesRows]);
+    const collator = new Intl.Collator("ru-RU");
+    return [...items, ...seriesRows].sort((a, b) => {
+      if (a.hasFutureDate !== b.hasFutureDate) return a.hasFutureDate ? -1 : 1;
+      const dateResult = a.date.localeCompare(b.date);
+      if (dateResult) return dateResult;
+      if (a.kind !== b.kind) return a.kind === "payment" ? -1 : 1;
+      return collator.compare(a.title, b.title);
+    });
   }
   function getViewRecords(today) {
     const todayKey = toDateKey(today);
@@ -601,7 +638,7 @@
     title.textContent = record.title;
     const badge = document.createElement("span");
     badge.className = `status-badge${status === "overdue" ? " is-overdue" : status === "completed" ? " is-complete" : ""}`;
-    badge.textContent = record.seriesMaster ? "Серия" : warning ? "Срок близко" : status === "completed" ? "Выполнено" : status === "overdue" ? "Просрочено" : "Запланировано";
+    badge.textContent = record.seriesMaster ? "Ежемесячно" : warning ? "Срок близко" : status === "completed" ? "Выполнено" : status === "overdue" ? "Просрочено" : "Запланировано";
     if (warning) badge.classList.add("is-warning");
     primary.append(title, badge);
 
@@ -619,7 +656,7 @@
     }
 
     if (!record.seriesMaster) {
-      const quick = createActionButton(status === "completed" ? "Вернуть" : "Готово", "toggle", reference, "record-quick-complete");
+      const quick = createActionButton(status === "completed" ? "Вернуть" : "Выполнено", "toggle", reference, "record-quick-complete");
       summaryRow.append(symbol, primary, facts, quick);
     } else {
       const placeholder = document.createElement("span");
@@ -713,7 +750,7 @@
     const [year, monthNumber] = selectedMonthKey.split("-").map(Number);
     const month = monthNumber - 1;
     const monthDate = new Date(year, month, 1);
-    document.getElementById("calendarTitle").textContent = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(monthDate);
+    document.getElementById("calendarTitle").textContent = formatMonthYear(monthDate);
     const firstDay = monthDate;
     const daysInMonth = new Date(year, month + 1, 0).getDate(), mondayOffset = (firstDay.getDay() + 6) % 7, cells = [];
     const monthStart = `${selectedMonthKey}-01`;
@@ -791,7 +828,9 @@
       const name = document.createElement("span");
       name.textContent = record.title;
       const value = document.createElement("span");
-      value.textContent = record.kind === "payment" ? formatMoney(record.amountKopecks) : getStatus(record, toDateKey(today)) === "completed" ? "Выполнено" : "Задача";
+      const status = getStatus(record, toDateKey(today));
+      const statusText = status === "completed" ? "Выполнено" : status === "overdue" ? "Просрочено" : getWarningState(record, toDateKey(today)) ? "Срок близко" : "Запланировано";
+      value.textContent = record.kind === "payment" ? `${formatMoney(record.amountKopecks)} · ${statusText}` : statusText;
       row.append(name, value);
       return row;
     }));
@@ -819,7 +858,7 @@
     document.getElementById("summaryRemaining").textContent = formatMoney(summary.remaining);
     document.getElementById("summaryOverdue").textContent = formatMoney(summary.overdue);
     document.getElementById("summaryUpcoming").textContent = formatMoney(summary.upcoming);
-    const monthName = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(parseDateKey(`${selectedMonthKey}-01`));
+    const monthName = formatMonthYear(parseDateKey(`${selectedMonthKey}-01`));
     document.getElementById("summaryTitle").textContent = `Сводка за ${monthName}`;
   }
   function renderReminders(today) {
@@ -854,6 +893,33 @@
     if (input) input.setAttribute("aria-invalid", "true");
     if (error) error.textContent = message;
   }
+  function clearFieldError(field) {
+    const input = document.getElementById(`entry${field[0].toUpperCase()}${field.slice(1)}`), error = document.getElementById(`${field}Error`);
+    if (input) input.removeAttribute("aria-invalid");
+    if (error) error.textContent = "";
+  }
+  function validateFieldOnBlur(input) {
+    const kind = document.querySelector('input[name="entryKind"]:checked').value;
+    if (input.id === "entryTitle") {
+      clearFieldError("title");
+      const title = input.value.trim();
+      if (!title) setFieldError("title", "Введите название");
+      else if (title.length > 100) setFieldError("title", "Не более 100 символов");
+    } else if (input.id === "entryAmount" && kind === "payment") {
+      clearFieldError("amount");
+      if (!normalizeAmount(input.value).valid) setFieldError("amount", "Введите сумму больше 0, не более 999 999 999,99 ₽ и до двух знаков после запятой");
+    } else if (input.id === "entryDate") {
+      clearFieldError("date");
+      if (!isValidDateKey(input.value)) setFieldError("date", "Укажите корректную дату");
+    } else if (input.id === "entryEndDate") {
+      clearFieldError("endDate");
+      const monthly = kind === "payment" && document.getElementById("entryFrequency").value === "monthly";
+      if (monthly && input.value && (!isValidDateKey(input.value) || input.value < document.getElementById("entryDate").value)) setFieldError("endDate", "Дата окончания не может быть раньше даты начала");
+    } else if (input.id === "entryNote") {
+      clearFieldError("note");
+      if (input.value.trim().length > 500) setFieldError("note", "Не более 500 символов");
+    }
+  }
   function updateFormVisibility() {
     const kind = document.querySelector('input[name="entryKind"]:checked').value, isPayment = kind === "payment";
     document.querySelectorAll(".payment-only").forEach((element) => { element.hidden = !isPayment; });
@@ -876,7 +942,7 @@
     document.getElementById("entryCategory").value = record?.category || "utilities";
     document.getElementById("entryAmount").value = record?.amountKopecks ? String(record.amountKopecks / 100).replace(".", ",") : "";
     document.getElementById("entryFrequency").value = options.frequency || record?.frequency || "once";
-    document.getElementById("entryDate").value = options.date || record?.date || toDateKey(new Date());
+    document.getElementById("entryDate").value = options.date ?? record?.date ?? "";
     document.getElementById("entryEndDate").value = options.endDate || "";
     document.getElementById("entryReminder").value = String(record?.reminderDays || state.settings.defaultReminderDays);
     document.getElementById("entryNote").value = record?.note || "";
@@ -884,7 +950,7 @@
   }
   function setFormLocks(context) {
     document.querySelectorAll('input[name="entryKind"]').forEach((radio) => { radio.disabled = context.mode !== "add"; });
-    document.getElementById("entryFrequency").disabled = context.sourceType === "series";
+    document.getElementById("entryFrequency").disabled = context.sourceType === "series" || context.mode === "edit";
   }
   function openForm(context, record, options = {}) {
     formContext = context; clearErrors();
@@ -1029,10 +1095,9 @@
     if (moveFocus) window.requestAnimationFrame(() => document.querySelector(`.calendar-day[data-date="${dateKey}"]`)?.focus());
   }
 
-  async function resetPlanner() {
-    if (!await askConfirm("Начать планировщик заново? Все платежи, задачи, серии и история будут удалены без возможности восстановления.", "Да, начать заново")) return;
+  function applyEmptyPlanner(successMessage) {
     const empty = createEmptyState();
-    if (!writeState(empty, "Планировщик сброшен")) return;
+    if (!writeState(empty, successMessage)) return false;
     state = empty;
     activeTab = "today";
     currentPage = 1;
@@ -1040,6 +1105,15 @@
     selectedDateKey = toDateKey(new Date());
     selectedMonthKey = getMonthKey(selectedDateKey);
     render(new Date());
+    return true;
+  }
+  async function resetPlanner() {
+    if (!await askConfirm("Начать планировщик заново? Все платежи, задачи, серии и история будут удалены без возможности восстановления.", "Да, начать заново")) return;
+    applyEmptyPlanner("Планировщик сброшен");
+  }
+  async function clearAllData() {
+    if (!await askConfirm("Удалить все платежи, задачи, серии и историю? Это действие нельзя отменить.", "Да, удалить всё")) return;
+    applyEmptyPlanner("Все данные удалены");
   }
 
   function bindEvents() {
@@ -1096,6 +1170,9 @@
     document.getElementById("entryDialog").addEventListener("cancel", (event) => { event.preventDefault(); attemptCloseForm(); });
     document.querySelectorAll('input[name="entryKind"]').forEach((radio) => radio.addEventListener("change", updateFormVisibility));
     document.getElementById("entryFrequency").addEventListener("change", updateFormVisibility);
+    for (const id of ["entryTitle", "entryAmount", "entryDate", "entryEndDate", "entryNote"]) {
+      document.getElementById(id).addEventListener("blur", (event) => validateFieldOnBlur(event.target));
+    }
     document.getElementById("entryNote").addEventListener("input", (event) => { document.getElementById("noteCounter").textContent = String(event.target.value.length); });
     document.getElementById("recordList").addEventListener("click", (event) => { const button = event.target.closest("button[data-action]"); if (button) handleRecordAction(button); });
     document.getElementById("choiceSingle").addEventListener("click", () => finishScope("single"));
@@ -1105,7 +1182,7 @@
     document.getElementById("confirmAccept").addEventListener("click", () => finishConfirm(true));
     document.getElementById("confirmCancel").addEventListener("click", () => finishConfirm(false));
     document.getElementById("confirmDialog").addEventListener("cancel", (event) => { event.preventDefault(); finishConfirm(false); });
-    document.getElementById("clearDataButton").addEventListener("click", resetPlanner);
+    document.getElementById("clearDataButton").addEventListener("click", clearAllData);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) render(new Date()); });
     document.addEventListener("keydown", trapModalFocus);
   }

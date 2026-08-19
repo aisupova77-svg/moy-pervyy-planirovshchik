@@ -6,14 +6,6 @@
     <meta name="color-scheme" content="light dark">
     <meta name="description" content="Локальный планировщик платежей и задач">
     <title>Плати вовремя</title>
-    <script>
-      try {
-        const savedState = JSON.parse(localStorage.getItem("pay-on-time:v1"));
-        if (savedState?.settings?.theme === "dark") document.documentElement.dataset.theme = "dark";
-      } catch (error) {
-        // Повреждённые данные будут обработаны основным скриптом после загрузки страницы.
-      }
-    </script>
     <link rel="stylesheet" href="style.css">
     <script src="script.js" defer></script>
   </head>
@@ -75,11 +67,11 @@
         </div>
 
         <div class="summary-grid">
-          <article class="summary-card summary-card-accent"><span>Запланировано</span><strong id="summaryPlanned">0,00 ₽</strong></article>
-          <article class="summary-card"><span>Оплачено</span><strong id="summaryPaid">0,00 ₽</strong></article>
-          <article class="summary-card"><span>Осталось</span><strong id="summaryRemaining">0,00 ₽</strong></article>
+          <article class="summary-card summary-card-accent"><span>Запланировано за период</span><strong id="summaryPlanned">0,00 ₽</strong></article>
+          <article class="summary-card"><span>Оплачено за период</span><strong id="summaryPaid">0,00 ₽</strong></article>
+          <article class="summary-card"><span>Осталось за период</span><strong id="summaryRemaining">0,00 ₽</strong></article>
           <article class="summary-card summary-card-danger"><span>Всего просрочено</span><strong id="summaryOverdue">0,00 ₽</strong></article>
-          <article class="summary-card summary-card-warn"><span>Ближайшие 7 дней</span><strong id="summaryUpcoming">0,00 ₽</strong></article>
+          <article class="summary-card summary-card-warn"><span>Предстоит в ближайшие 7 дней</span><strong id="summaryUpcoming">0,00 ₽</strong></article>
         </div>
       </section>
 
