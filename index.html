@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Локальный планировщик платежей и задач">
+    <title>Плати вовремя</title>
+    <script>
+      try {
+        const savedState = JSON.parse(localStorage.getItem("pay-on-time:v1"));
+        if (savedState?.settings?.theme === "dark") document.documentElement.dataset.theme = "dark";
+      } catch (error) {
+        // Повреждённые данные будут обработаны основным скриптом после загрузки страницы.
+      }
+    </script>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Перейти к содержимому</a>
+
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand-block">
+          <p class="eyebrow">Личный планировщик</p>
+          <h1>Плати вовремя</h1>
+          <p class="today-label" id="todayLabel" aria-live="polite"></p>
+        </div>
+
+        <div class="header-actions">
+          <button class="icon-button reminder-button" id="reminderButton" type="button" aria-label="Открыть ближайшие предупреждения">
+            <span aria-hidden="true">🔔</span>
+            <span id="reminderCount">0</span>
+          </button>
+          <button class="icon-button" id="themeToggle" type="button" aria-label="Включить тёмную тему">
+            <span id="themeIcon" aria-hidden="true">◐</span>
+            <span id="themeText">Тёмная тема</span>
+          </button>
+          <button class="icon-button settings-button" id="settingsButton" type="button" aria-label="Открыть настройки">
+            <span aria-hidden="true">⚙</span>
+            <span class="settings-button-text">Настройки</span>
+          </button>
+          <button class="icon-button reset-button" id="resetPlannerButton" type="button">
+            <span aria-hidden="true">↺</span>
+            <span>Сброс</span>
+          </button>
+          <button class="primary-button" id="addEntryButton" type="button">
+            <span aria-hidden="true">＋</span>
+            Добавить
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="notice storage-notice" id="storageNotice" hidden>
+      <div>
+        <strong>Данные остаются на этом устройстве</strong>
+        <p>Они хранятся только в этом браузере и могут исчезнуть после очистки его данных.</p>
+      </div>
+      <button class="notice-close" id="dismissStorageNotice" type="button" aria-label="Закрыть предупреждение">×</button>
+    </div>
+
+    <div class="notice error-notice" id="storageError" role="alert" hidden>
+      <strong id="storageErrorText"></strong>
+    </div>
+
+    <main id="main-content" class="page-shell">
+      <section class="summary-section" aria-labelledby="summaryTitle">
+        <div class="section-heading compact-heading">
+          <div>
+            <p class="eyebrow">Финансовая картина</p>
+            <h2 id="summaryTitle">Сводка за текущий месяц</h2>
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <article class="summary-card summary-card-accent"><span>Запланировано</span><strong id="summaryPlanned">0,00 ₽</strong></article>
+          <article class="summary-card"><span>Оплачено</span><strong id="summaryPaid">0,00 ₽</strong></article>
+          <article class="summary-card"><span>Осталось</span><strong id="summaryRemaining">0,00 ₽</strong></article>
+          <article class="summary-card summary-card-danger"><span>Всего просрочено</span><strong id="summaryOverdue">0,00 ₽</strong></article>
+          <article class="summary-card summary-card-warn"><span>Ближайшие 7 дней</span><strong id="summaryUpcoming">0,00 ₽</strong></article>
+        </div>
+      </section>
+
+      <div class="workspace-grid">
+        <section class="records-panel" aria-labelledby="recordsTitle">
+          <div class="section-heading compact-heading">
+            <div>
+              <p class="eyebrow">Ваш план</p>
+              <h2 id="recordsTitle">Записи</h2>
+            </div>
+            <span class="record-count" id="recordCount" aria-live="polite">0 записей</span>
+          </div>
+
+          <nav class="tabs" role="tablist" aria-label="Разделы планировщика">
+            <button class="tab is-active" id="tabToday" data-tab="today" type="button" role="tab" aria-selected="true" aria-controls="recordList">Сегодня</button>
+            <button class="tab" id="tabUpcoming" data-tab="upcoming" type="button" role="tab" aria-selected="false" aria-controls="recordList" tabindex="-1">Ближайшие</button>
+            <button class="tab" id="tabOverdue" data-tab="overdue" type="button" role="tab" aria-selected="false" aria-controls="recordList" tabindex="-1">Просроченные</button>
+            <button class="tab" id="tabCompleted" data-tab="completed" type="button" role="tab" aria-selected="false" aria-controls="recordList" tabindex="-1">Выполненные</button>
+            <button class="tab" id="tabAll" data-tab="all" type="button" role="tab" aria-selected="false" aria-controls="recordList" tabindex="-1">Все записи</button>
+          </nav>
+
+          <div class="record-list" id="recordList" role="tabpanel" aria-labelledby="tabToday" tabindex="0"></div>
+          <nav class="pagination" id="pagination" aria-label="Страницы списка" hidden>
+            <button class="secondary-button" id="pagePrevious" type="button">Назад</button>
+            <span id="pageStatus" aria-live="polite"></span>
+            <button class="secondary-button" id="pageNext" type="button">Далее</button>
+          </nav>
+        </section>
+
+        <aside class="calendar-panel" aria-labelledby="calendarTitle">
+          <div class="calendar-header">
+            <div class="calendar-title-block">
+              <p class="eyebrow">Календарь</p>
+              <div class="calendar-period" aria-label="Навигация по месяцам">
+                <button id="calendarPrevious" type="button" aria-label="Предыдущий месяц">‹</button>
+                <h2 id="calendarTitle" aria-live="polite"></h2>
+                <button id="calendarNext" type="button" aria-label="Следующий месяц">›</button>
+              </div>
+            </div>
+            <button class="calendar-today-button" id="calendarToday" type="button">Сегодня</button>
+          </div>
+          <div class="calendar-weekdays" aria-hidden="true">
+            <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+          </div>
+          <div class="calendar-grid" id="calendarGrid" aria-label="Календарь выбранного месяца"></div>
+          <section class="day-panel" aria-labelledby="selectedDayTitle">
+            <div class="day-panel-header">
+              <h3 id="selectedDayTitle" aria-live="polite">Записи выбранного дня</h3>
+              <button class="secondary-button" id="addOnSelectedDate" type="button">Добавить на эту дату</button>
+            </div>
+            <div class="day-records" id="dayRecords"></div>
+            <nav class="pagination day-pagination" id="dayPagination" aria-label="Страницы записей выбранного дня" hidden>
+              <button class="secondary-button" id="dayPagePrevious" type="button">Назад</button>
+              <span id="dayPageStatus" aria-live="polite"></span>
+              <button class="secondary-button" id="dayPageNext" type="button">Далее</button>
+            </nav>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <dialog class="settings-dialog" id="settingsDialog" aria-labelledby="settingsTitle" aria-modal="true">
+      <section class="settings-panel">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Настройки</p>
+            <h2 id="settingsTitle" tabindex="-1">Хранение и оформление</h2>
+          </div>
+          <button class="dialog-close" id="closeSettingsDialog" type="button" aria-label="Закрыть настройки">×</button>
+        </div>
+        <div class="settings-copy">
+          <p>Данные хранятся только в текущем браузере. Очистка данных браузера может удалить записи.</p>
+          <p id="storageStatus" aria-live="polite">Проверяем локальное хранилище…</p>
+          <button class="danger-button" id="clearDataButton" type="button">Удалить все данные</button>
+        </div>
+      </section>
+    </dialog>
+
+    <dialog class="entry-dialog" id="entryDialog" aria-labelledby="dialogTitle" aria-modal="true">
+      <form id="entryForm" novalidate>
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow" id="dialogEyebrow">Новая запись</p>
+            <h2 id="dialogTitle">Добавить запись</h2>
+          </div>
+          <button class="dialog-close" id="closeEntryDialog" type="button" aria-label="Закрыть форму">×</button>
+        </div>
+
+        <fieldset class="type-switch" id="kindFieldset">
+          <legend>Тип записи</legend>
+          <label><input type="radio" name="entryKind" value="payment" checked> Платёж</label>
+          <label><input type="radio" name="entryKind" value="task"> Задача</label>
+        </fieldset>
+
+        <div class="form-grid">
+          <div class="form-field form-field-wide">
+            <label for="entryTitle">Название <span aria-hidden="true">*</span></label>
+            <input id="entryTitle" name="title" type="text" maxlength="100" autocomplete="off" aria-describedby="titleError" required>
+            <span class="field-error" id="titleError" aria-live="polite"></span>
+          </div>
+
+          <div class="form-field payment-only" id="categoryField">
+            <label for="entryCategory">Категория <span aria-hidden="true">*</span></label>
+            <select id="entryCategory" name="category" aria-describedby="categoryError">
+              <option value="utilities">ЖКХ</option>
+              <option value="electricity">Электричество</option>
+              <option value="internet">Интернет</option>
+              <option value="phone">Телефон</option>
+              <option value="credits">Кредиты</option>
+              <option value="subscriptions">Подписки</option>
+              <option value="other">Другое</option>
+            </select>
+            <span class="field-error" id="categoryError" aria-live="polite"></span>
+          </div>
+
+          <div class="form-field payment-only" id="amountField">
+            <label for="entryAmount">Сумма, ₽ <span aria-hidden="true">*</span></label>
+            <input id="entryAmount" name="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-describedby="amountError">
+            <span class="field-error" id="amountError" aria-live="polite"></span>
+          </div>
+
+          <div class="form-field payment-only" id="frequencyField">
+            <label for="entryFrequency">Повторение</label>
+            <select id="entryFrequency" name="frequency">
+              <option value="once">Разовый платёж</option>
+              <option value="monthly">Ежемесячно</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label for="entryDate">Дата <span aria-hidden="true">*</span></label>
+            <input id="entryDate" name="date" type="date" aria-describedby="dateError" required>
+            <span class="field-error" id="dateError" aria-live="polite"></span>
+          </div>
+
+          <div class="form-field payment-only" id="endDateField" hidden>
+            <label for="entryEndDate">Дата окончания</label>
+            <input id="entryEndDate" name="endDate" type="date" aria-describedby="endDateError">
+            <span class="field-error" id="endDateError" aria-live="polite"></span>
+          </div>
+
+          <div class="form-field">
+            <label for="entryReminder">Предупредить</label>
+            <select id="entryReminder" name="reminderDays">
+              <option value="1">За 1 день</option>
+              <option value="3">За 3 дня</option>
+            </select>
+          </div>
+
+          <div class="form-field form-field-wide">
+            <label for="entryNote">Примечание</label>
+            <textarea id="entryNote" name="note" rows="3" maxlength="500" aria-describedby="noteHint noteError"></textarea>
+            <span class="field-hint" id="noteHint"><span id="noteCounter">0</span>/500</span>
+            <span class="field-error" id="noteError" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="secondary-button" id="cancelEntryButton" type="button">Отмена</button>
+          <button class="primary-button" id="saveEntryButton" type="submit">Добавить</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="choice-dialog" id="choiceDialog" aria-labelledby="choiceTitle" aria-modal="true">
+      <div class="choice-dialog-content">
+        <h2 id="choiceTitle" tabindex="-1"></h2>
+        <p id="choiceMessage"></p>
+        <div class="dialog-actions choice-actions">
+          <button class="secondary-button" id="choiceCancel" type="button">Отмена</button>
+          <button class="secondary-button" id="choiceSingle" type="button">Только этот платёж</button>
+          <button class="primary-button" id="choiceAll" type="button">Всю серию</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle" aria-modal="true">
+      <div class="choice-dialog-content">
+        <h2 id="confirmTitle" tabindex="-1">Подтвердите действие</h2>
+        <p id="confirmMessage"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" id="confirmCancel" type="button">Отмена</button>
+          <button class="danger-button" id="confirmAccept" type="button">Удалить</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>
